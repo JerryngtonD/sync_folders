@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
-	"gopackages/configs"
 	"io"
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
+	"sync_folders/configs"
 )
 
 //func checkExit(c chan os.Signal) {
@@ -44,7 +45,7 @@ func main() {
 	watcher.Add(config.FirstDir)
 	watcher.Add(config.SecondDir)
 
-	go watchDir(watcher, config, c, cancel)
+	go watchDir(watcher, config, c, cancel, &wg)
 
 	wg.Wait()
 }
@@ -73,9 +74,19 @@ func handleEvent(event fsnotify.Event, config configs.WatcherConfig) {
 }
 
 func getFileNameAndDirFromPath(path string) (string, string) {
-	pathChunks := strings.Split(path, "\\")
+	const PATH_WINDOWS_SEPARATOR = "\\"
+	const PATH_UNIX_SEPARATOR = "/"
+
+	var pathChunks []string
+	if runtime.GOOS == "windows" {
+		pathChunks = strings.Split(path, PATH_WINDOWS_SEPARATOR)
+	} else {
+		pathChunks = strings.Split(path, PATH_UNIX_SEPARATOR)
+	}
+
 	fileName := pathChunks[len(pathChunks)-1]
 	dir := path[:len(path)-len(fileName)]
+
 	return fileName, dir
 }
 
@@ -120,7 +131,7 @@ func deleteFile(filePath string) error {
 func syncState(event fsnotify.Event, pathFrom string, pathTo string) {
 	if event.Op == fsnotify.Create {
 		go copyFile(pathFrom, pathTo)
-	} else if event.Op == fsnotify.Remove {
+	} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
 		go deleteFile(pathTo)
 	}
 }
@@ -129,7 +140,8 @@ func watchDir(
 	watcher *fsnotify.Watcher,
 	config configs.WatcherConfig,
 	c chan os.Signal,
-	cancel context.CancelFunc) {
+	cancel context.CancelFunc,
+	wg *sync.WaitGroup) {
 	for {
 		select {
 		// watch for events
@@ -141,8 +153,10 @@ func watchDir(
 		// watch for exit
 		case sig := <-c:
 			fmt.Printf("Got %s signal. Aborting...\n", sig)
+			log.Print("a")
 			cancel()
-			os.Exit(1)
+			log.Print("b")
+			wg.Done()
 		}
 	}
 }

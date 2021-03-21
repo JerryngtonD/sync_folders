@@ -4,22 +4,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
-	"io"
+	configs "gopackages/configs"
+	internal "gopackages/internal"
 	"log"
 	"os"
 	"os/signal"
-	"runtime"
 	"strings"
 	"sync"
-	"sync_folders/configs"
 )
-
-//func checkExit(c chan os.Signal) {
-//	select {
-//	case sig := <-c:
-//
-//	}
-//}
 
 func main() {
 	config, err := configs.ReadWatcherConfiguration()
@@ -27,14 +19,26 @@ func main() {
 		fmt.Errorf("some error was thrown while reading config")
 	}
 
+	// initialize infinite waiting till signal of exit
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go watchDir(config, &wg)
+
+	wg.Wait()
+}
+
+func watchDir(
+	config configs.WatcherConfig,
+	wg *sync.WaitGroup,
+) {
+	// initialize channel for get exit signal
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt)
 
+	// background context for cancellation
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -42,16 +46,39 @@ func main() {
 	}
 	defer watcher.Close()
 
+	// add folders to watcher observation
 	watcher.Add(config.FirstDir)
 	watcher.Add(config.SecondDir)
 
-	go watchDir(watcher, config, c, cancel, &wg)
+	// initialize logger for writing to text.log
+	logFile, err := os.OpenFile("text.log",
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer logFile.Close()
+	logger := log.New(logFile, "", log.LstdFlags)
 
-	wg.Wait()
+	// infinite
+	for {
+		select {
+		// watch for events
+		case event := <-watcher.Events:
+			go handleEvent(event, config, logger)
+		// watch for errors
+		case err := <-watcher.Errors:
+			fmt.Println("ERROR", err)
+		// watch for exit
+		case sig := <-c:
+			fmt.Printf("Got %s signal. Aborting...\n", sig)
+			cancel()
+			wg.Done()
+		}
+	}
 }
 
-func handleEvent(event fsnotify.Event, config configs.WatcherConfig) {
-	fileName, dir := getFileNameAndDirFromPath(event.Name)
+func handleEvent(event fsnotify.Event, config configs.WatcherConfig, logger *log.Logger) {
+	fileName, dir := internal.GetFileNameAndDirFromPath(event.Name)
 
 	master := config.FirstDir
 	slave := config.SecondDir
@@ -70,93 +97,13 @@ func handleEvent(event fsnotify.Event, config configs.WatcherConfig) {
 		pathTo = masterFilePath
 	}
 
-	syncState(event, pathFrom, pathTo)
+	syncState(event, pathFrom, pathTo, logger)
 }
 
-func getFileNameAndDirFromPath(path string) (string, string) {
-	const PATH_WINDOWS_SEPARATOR = "\\"
-	const PATH_UNIX_SEPARATOR = "/"
-
-	var pathChunks []string
-	if runtime.GOOS == "windows" {
-		pathChunks = strings.Split(path, PATH_WINDOWS_SEPARATOR)
-	} else {
-		pathChunks = strings.Split(path, PATH_UNIX_SEPARATOR)
-	}
-
-	fileName := pathChunks[len(pathChunks)-1]
-	dir := path[:len(path)-len(fileName)]
-
-	return fileName, dir
-}
-
-func copyFile(fromPath string, toPath string) error {
-	if !Exists(toPath) {
-		from, err := os.OpenFile(fromPath, os.O_RDONLY, 0666)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer from.Close()
-
-		to, err := os.OpenFile(toPath, os.O_RDWR|os.O_CREATE, 0666)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer to.Close()
-
-		_, err = io.Copy(to, from)
-		if err != nil {
-			return fmt.Errorf("unexpected error with copying: ", err)
-		}
-		return nil
-	}
-	return nil
-}
-
-func Exists(name string) bool {
-	if _, err := os.Stat(name); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
-func deleteFile(filePath string) error {
-	err := os.Remove(filePath)
-	return err
-}
-
-func syncState(event fsnotify.Event, pathFrom string, pathTo string) {
+func syncState(event fsnotify.Event, pathFrom string, pathTo string, logger *log.Logger) {
 	if event.Op == fsnotify.Create {
-		go copyFile(pathFrom, pathTo)
+		internal.CopyFile(pathFrom, pathTo, logger)
 	} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
-		go deleteFile(pathTo)
-	}
-}
-
-func watchDir(
-	watcher *fsnotify.Watcher,
-	config configs.WatcherConfig,
-	c chan os.Signal,
-	cancel context.CancelFunc,
-	wg *sync.WaitGroup) {
-	for {
-		select {
-		// watch for events
-		case event := <-watcher.Events:
-			handleEvent(event, config)
-		// watch for errors
-		case err := <-watcher.Errors:
-			fmt.Println("ERROR", err)
-		// watch for exit
-		case sig := <-c:
-			fmt.Printf("Got %s signal. Aborting...\n", sig)
-			log.Print("a")
-			cancel()
-			log.Print("b")
-			wg.Done()
-		}
+		internal.DeleteFile(pathTo, logger)
 	}
 }

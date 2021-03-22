@@ -16,7 +16,8 @@ import (
 func main() {
 	config, err := configs.ReadWatcherConfiguration()
 	if err != nil {
-		fmt.Errorf("some error was thrown while reading config")
+		fmt.Println("some error was thrown while reading config")
+		return
 	}
 
 	// initialize infinite waiting till signal of exit
@@ -59,12 +60,12 @@ func watchDir(
 	defer logFile.Close()
 	logger := log.New(logFile, "", log.LstdFlags)
 
-	// infinite
+	// infinite process cycle
 	for {
 		select {
 		// watch for events
 		case event := <-watcher.Events:
-			go handleEvent(event, config, logger)
+			go handleEvent(event, config, logger, cancel)
 		// watch for errors
 		case err := <-watcher.Errors:
 			fmt.Println("ERROR", err)
@@ -77,7 +78,11 @@ func watchDir(
 	}
 }
 
-func handleEvent(event fsnotify.Event, config configs.WatcherConfig, logger *log.Logger) {
+func handleEvent(
+	event fsnotify.Event,
+	config configs.WatcherConfig,
+	logger *log.Logger,
+	cancel context.CancelFunc) {
 	fileName, dir := internal.GetFileNameAndDirFromPath(event.Name)
 
 	master := config.FirstDir
@@ -97,13 +102,24 @@ func handleEvent(event fsnotify.Event, config configs.WatcherConfig, logger *log
 		pathTo = masterFilePath
 	}
 
-	syncState(event, pathFrom, pathTo, logger)
+	err := syncState(event, pathFrom, pathTo, logger)
+	if err != nil {
+		fmt.Println("got an error with attempt to sync state")
+		cancel()
+	}
 }
 
-func syncState(event fsnotify.Event, pathFrom string, pathTo string, logger *log.Logger) {
+func syncState(event fsnotify.Event, pathFrom string, pathTo string, logger *log.Logger) error {
 	if event.Op == fsnotify.Create {
-		internal.CopyFile(pathFrom, pathTo, logger)
+		err := internal.CopyFile(pathFrom, pathTo, logger)
+		if err != nil {
+			return fmt.Errorf("got error with copying file")
+		}
 	} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
-		internal.DeleteFile(pathTo, logger)
+		err := internal.DeleteFile(pathTo, logger)
+		if err != nil {
+			return fmt.Errorf("got error with deleting file")
+		}
 	}
+	return nil
 }

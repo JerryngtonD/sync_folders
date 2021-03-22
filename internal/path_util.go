@@ -43,9 +43,11 @@ func CopyFile(fromPath string, toPath string, logger *log.Logger) error {
 
 		_, err = io.Copy(to, from)
 		if err != nil {
-			return fmt.Errorf("unexpected error with copying: ", err)
+			return fmt.Errorf("unexpected error with copying")
 		}
-		logger.Println("Successfully sync copying file from: " + fromPath + " to path: " + toPath)
+		if logger != nil {
+			logger.Println("Successfully sync copying file from: " + fromPath + " to path: " + toPath)
+		}
 	}
 	return nil
 }
@@ -61,8 +63,18 @@ func Exists(name string) bool {
 
 func DeleteFile(filePath string, logger *log.Logger) error {
 	err := os.Remove(filePath)
-	if err == nil {
-		logger.Println("Successfully sync removing file: " + filePath)
+	if err != nil {
+		return err
 	}
-	return err
+	logger.Println("Successfully sync removing file: " + filePath)
+	return nil
+}
+
+func DeleteDirectory(dirPath string) error {
+	err := os.RemoveAll(dirPath)
+	if err != nil {
+		fmt.Println("got error with deleting presented directory: " + dirPath)
+		return err
+	}
+	return nil
 }

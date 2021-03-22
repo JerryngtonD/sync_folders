@@ -8,4 +8,4 @@
 
 `MacOs - https://www.youtube.com/watch?v=Sjl4Wnmtv8Q`
 
-`Windows - https://www.youtube.com/watch?v=0d6kgHIXf9U&t=21s`
+`Windows - https://www.youtube.com/watch?v=0d6kgHIXf9U`
